@@ -1,41 +1,34 @@
-from PIL import Image, ImageFilter
-import tensorflow as tf
 import cv2
+from tensorflow import keras
 import numpy as np
 import os
-from time import sleep
+import imutils
+import json
+from PIL import Image
+from typing import List, Dict
 
 
-
-try:
-    os.remove('digits.txt')
-except FileNotFoundError:
-    pass
-
-directory ='./images_digit'
-files = os.listdir(directory)
-for file in files:
-    os.remove('images_digit/'+str(file))
+def delete_file():
+    try:
+        os.remove('other_files/digits.txt')
+    except FileNotFoundError:
+        pass
 
 
-def image_enhancement(path_to_image):
-    im = Image.open(path_to_image)
-    width, height = im.size
-    width = width
-    height = height
-    big_img = path_to_image
-    resized_img = im.resize((width, height), Image.ANTIALIAS)
-    save_resized_img = resized_img.save(big_img)
-    return big_img
-
-big_img=image_enhancement('Enter the path to the file')
-
-def sort_file(path_to_directory):
-    files=os.listdir(path_to_directory)
-    files=sorted(files)
+def sort_file(path_to_digits_directory: str) -> List[str]:
+    files = os.listdir(path_to_digits_directory)
+    files = sorted(files)
     return files
 
-def sort_contours(cnts, method="left-to-right"):
+
+def final_resized_image(big_image: str, len_countors: int) -> str:
+    img = cv2.imread(big_image)
+    resized_img = imutils.resize(img, width=80*len_countors)
+    cv2.imwrite(big_image, resized_img)
+    return big_image
+
+
+def sort_contours(cnts: tuple, method="left-to-right") -> tuple:
     reverse = False
     i = 0
 
@@ -51,123 +44,149 @@ def sort_contours(cnts, method="left-to-right"):
     return (cnts, boundingBoxes)
 
 
-def cropping():
-    img = cv2.imread(big_img)
+def number_circuits(medium_image: str) -> str:
+    img = cv2.imread(medium_image)
     gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     th, threshed = cv2.threshold(gray_img, 100, 255, cv2.THRESH_OTSU | cv2.THRESH_BINARY_INV)
     morphed = cv2.morphologyEx(threshed, cv2.MORPH_OPEN, np.ones((2, 2)))
     contours = cv2.findContours(morphed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[-2]
-    (contours, boundingBoxes) = sort_contours(contours, method="left-to-right")
-    nh, nw = img.shape[:2]
-    for contour in contours:
-        for i in range(1, len(contours)):
-            x, y, w, h = cv2.boundingRect(contours[i])
+    big_image = final_resized_image(medium_image, len(contours))
+    return big_image
 
-            if h < 0.2 * nh:
+
+def improve_image(big_image: str) -> str:
+    black = (0, 0, 0)
+    white = (255, 255, 255)
+    threshold = (160, 160, 160)
+    img = Image.open(big_image).convert("LA")
+    pixels = img.getdata()
+    newPixels = []
+    for pixel in pixels:
+        if pixel < threshold:
+            newPixels.append(black)
+        else:
+            newPixels.append(white)
+    newImg = Image.new("RGB", img.size)
+    newImg.putdata(newPixels)
+    newImg.save(big_image)
+    return big_image
+
+
+def cropping(improved_image: str):
+    image = cv2.imread(improved_image)
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    gray = cv2.GaussianBlur(gray, (7, 7), 0)
+    ret, thresh1 = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY_INV)
+    dilate = cv2.dilate(thresh1, None, iterations=2)
+    cnts = cv2.findContours(dilate.copy(), cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE)
+    cnts = cnts[0] if imutils.is_cv2() else cnts[1]
+    (cnts, boundingBoxes) = sort_contours(cnts, method="left-to-right")
+    nh, nw = image.shape[:2]
+    for contour in cnts:
+        for i in range(0, len(cnts)):
+            x, y, w, h = cv2.boundingRect(cnts[i])
+
+            if h < 0.27 * nh:
                 continue
 
-            cv2.rectangle(img, (x, y), (x + w, y + h), (255, 0, 255), 1, cv2.LINE_AA)
-            img_crop = img[y:y + h, x:x + w]
-            gray_img_norm = cv2.cvtColor(img_crop, cv2.COLOR_BGR2GRAY)
-            cv2.imwrite('images_digit/digit{}.jpg'.format(i), img_crop)
+            cv2.rectangle(image, (x, y), (x + w, y + h), (255, 255, 255), 0, cv2.LINE_AA)
+            img_crop = image[y - 10:y + h + 10, x:x + w]
+            cv2.imwrite('images_digit/image{}.jpg'.format(i), img_crop)
 
 
-
-def predicting(imvalue):
-
-    x = tf.placeholder(tf.float32, [None, 784])
-    W = tf.Variable(tf.zeros([784, 10]))
-    b = tf.Variable(tf.zeros([10]))
-
-    def constant_width(shape):
-        initial = tf.truncated_normal(shape, stddev=0.1)
-        return tf.Variable(initial)
-
-    def bias_variable(shape):
-        initial = tf.constant(0.1, shape=shape)
-        return tf.Variable(initial)
-
-    def conv2d(x, W):
-        return tf.nn.conv2d(x, W, strides=[1, 1, 1, 1], padding='SAME')
-
-    def max_pool_2x2(x):
-        return tf.nn.max_pool(x, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME')
-
-    W_conv1 = constant_width([5, 5, 1, 32])
-    b_conv1 = bias_variable([32])
-    x_image = tf.reshape(x, [-1, 28, 28, 1])
-    h_conv1 = tf.nn.relu(conv2d(x_image, W_conv1) + b_conv1)
-    h_pool1 = max_pool_2x2(h_conv1)
-    W_conv2 = constant_width([5, 5, 32, 64])
-    b_conv2 = bias_variable([64])
-    h_conv2 = tf.nn.relu(conv2d(h_pool1, W_conv2) + b_conv2)
-    h_pool2 = max_pool_2x2(h_conv2)
-    W_fc1 = constant_width([7 * 7 * 64, 1024])
-    b_fc1 = bias_variable([1024])
-    h_pool2_flat = tf.reshape(h_pool2, [-1, 7 * 7 * 64])
-    h_fc1 = tf.nn.relu(tf.matmul(h_pool2_flat, W_fc1) + b_fc1)
-    keep_prob = tf.placeholder(tf.float32)
-    h_fc1_drop = tf.nn.dropout(h_fc1, keep_prob)
-    W_fc2 = constant_width([1024, 10])
-    b_fc2 = bias_variable([10])
-    y_conv = tf.nn.softmax(tf.matmul(h_fc1_drop, W_fc2) + b_fc2)
-    init_op = tf.initialize_all_variables()
-    saver = tf.train.Saver()
-
-    with tf.Session() as sess:
-        sess.run(init_op)
-        saver.restore(sess, "model2.ckpt")
-        prediction = tf.argmax(y_conv, 1)
-        return prediction.eval(feed_dict={x: [imvalue], keep_prob: 1.0}, session=sess)
+def number_of_files(path_to_digits_directory: str) -> int:
+    len_files = os.listdir(path_to_digits_directory)
+    return len(len_files)
 
 
-
-def imageprepare(argv):
-    im = Image.open(argv).convert('L')
-    width = float(im.size[0])
-    height = float(im.size[1])
-    newImage = Image.new('L', (28, 28), (255))
-
-    if width > height:
-        nheight = int(round((20.0 / width * height), 0))
-        if nheight==0:
-            nheigth = 1
-        img = im.resize((20, nheight), Image.ANTIALIAS).filter(ImageFilter.SHARPEN)
-        wtop = int(round(((28 - nheight) / 2), 0))
-        newImage.paste(img, (4, wtop))
-    else:
-        nwidth = int(round((20.0 / height * width), 0))
-        if (nwidth == 0):
-            nwidth = 1
-        # resize and sharpen
-        img = im.resize((nwidth, 20), Image.ANTIALIAS).filter(ImageFilter.SHARPEN)
-        wleft = int(round(((28 - nwidth) / 2), 0))
-        newImage.paste(img, (wleft, 4))
+def convert_to_black(path_to_number_directory: str):
+    all_files = os.listdir(path_to_number_directory)
+    for file in all_files:
+        im_gray = cv2.imread(path_to_number_directory+'/'+file, cv2.IMREAD_GRAYSCALE)
+        (thresh, im_bw) = cv2.threshold(im_gray, 128, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+        cv2.imwrite(path_to_number_directory+'/'+file, im_bw)
 
 
-    tv = list(newImage.getdata())
-
-    tva = [(255 - x) * 1.0 / 255.0 for x in tv]
-    return tva
-
-
-
-def main(argv):
-    imvalue = imageprepare(argv)
-    predint = predicting(imvalue)
-    file = open('digits.txt', 'a')
-    file.write(str(predint[0]))
+def image_resize(path_to_digits_directory: str):
+    files = os.listdir(path_to_digits_directory)
+    for file in files:
+        im = Image.open(path_to_digits_directory+file)
+        width = 50
+        height = 50
+        resized_img = im.resize((width, height), Image.ANTIALIAS)
+        resized_img.save(path_to_digits_directory+file)
 
 
+def predicting(path_to_digits_directory: str):
+    image = keras.preprocessing.image
+    model = keras.models.load_model('other_files/model_digits.h5')
+    papka = os.listdir(path_to_digits_directory)
+    papka = sorted(papka, key=lambda x: int(''.join(filter(str.isdigit, x))))
+    for file_image in papka:
+        path = path_to_digits_directory+file_image
+        img = image.load_img(path, target_size=(50, 50))
+        x = image.img_to_array(img)
+        x = np.expand_dims(x, axis=0)
+        images = np.vstack([x])
+        classes = model.predict(images, batch_size=10)
+        img = image.load_img(path, target_size=(50, 50))
+        my_file = open("other_files/digits.txt", "a")
+        my_file.write(str(np.argmax(classes[0])))
 
-if __name__ == "__main__":
-    cropping()
-    sleep(8)
-    num_graph=[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
-    directory = './images_digit'
-    files = sort_file(directory)
 
-    for i in range(len(files)):
-        num_graph[i] = tf.Graph()
-        with num_graph[i].as_default():
-            main(directory + '/' + str(files[i]))
+def read_digits(file_name: str) -> Dict[str, str]:
+    arr_digits = []
+    try:
+        f = open('other_files/digits.txt')
+        for line in f:
+            arr_digits.append(line)
+        data = {"name image": file_name,
+                "digits": arr_digits[0]}
+        return data
+    except FileNotFoundError:
+        pass
+
+
+def size_images(path_to_digits_directory: str):
+    files = os.listdir(path_to_digits_directory)
+    for file in files:
+        image_size = os.path.getsize(path_to_digits_directory+file)
+        if image_size == 0:
+            os.remove(path_to_digits_directory+file)
+
+
+def form(data: List[dict]):
+    file = open("other_files/result.json", "w")
+    json.dump(data, file, indent=2)
+
+
+def main():
+    arrays_digits = []
+    image_directory = './Числа 3'
+    convert_to_black(image_directory)
+    files = os.listdir(image_directory)
+    for file in files:
+        big_image = number_circuits(image_directory+'/'+file)
+        improved_image = improve_image(big_image)
+        try:
+            cropping(improved_image)
+        except ValueError:
+            print("Контуров не найдено!")
+        digits_directory = './images_digit/'
+        sort_file(digits_directory)
+        if number_of_files(digits_directory) == 0:
+            print('Контуров не найдено!')
+        else:
+            size_images(digits_directory)
+            image_resize(digits_directory)
+            predicting(digits_directory)
+            arr_digits = read_digits(file)
+            delete_file()
+            os.system('rm -rf %s/*' % './images_digit')
+            arrays_digits.append(arr_digits)
+        form(arrays_digits)
+
+
+if __name__ == '__main__':
+    main()
