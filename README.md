@@ -1,6 +1,6 @@
   Recognition handwritten digits
   =======
-  This project uses a dataset that has 500 thousand images of handwritten numbers.Tested on Linux
+  This project uses a dataset that has 500K images of handwritten numbers.Tested on Linux
 
   Prerequisites
   ----------
